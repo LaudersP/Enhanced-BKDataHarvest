@@ -342,11 +342,11 @@ class BKClient:
         cur_lat = lat_start
         cur_lon = lon_start
 
-        while cur_lat > lat_end:
+        while cur_lat < lat_end:
             while cur_lon < lon_end:
                 intersections.append((cur_lat, cur_lon))
                 cur_lon += increment
-            cur_lat -= increment
+            cur_lat += increment
             cur_lon = lon_start
 
         bks = self.get_many_nearby_stores(intersections, threads=10)
