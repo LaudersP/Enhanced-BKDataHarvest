@@ -11,11 +11,11 @@ Welcome to the Enhanced BKDataHarvest, an advanced fork of LLM Explorer's BKData
 ## Installation
 Clone this repository using:
 ```bash
-git clone https://github.com/LaudersP/BKDataHarvest.git
+https://github.com/LaudersP/Enhanced-BKDataHarvest.git
 ```
 Navigate into the project directory:
 ```bash
-cd BKDataHarvest
+cd Enhanced-BKDataHarvest
 ```
 Install required dependencies:
 ```bash
