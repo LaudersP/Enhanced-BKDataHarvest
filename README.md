@@ -11,7 +11,7 @@ Welcome to the Enhanced BKDataHarvest, an advanced fork of LLM Explorer's BKData
 ## Installation
 Clone this repository using:
 ```bash
-https://github.com/LaudersP/Enhanced-BKDataHarvest.git
+git clone https://github.com/LaudersP/Enhanced-BKDataHarvest.git
 ```
 Navigate into the project directory:
 ```bash
@@ -25,7 +25,7 @@ pip install -r requirements.txt
 ## Usage
 To start collecting data and generating the heat map:
 ```bash
-python run_collector.py
+python main.py
 ```
 Refer to the `docs` directory for detailed usage and additional functionalities.
 
