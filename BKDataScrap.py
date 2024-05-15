@@ -3,43 +3,91 @@ from BKClient import BKClient
 from tqdm import tqdm
 
 class BKDataScraping:
-    def __init__(self, database_path):
+    def __init__(self, database_path, show_process_bar=False):
         self.database_path = database_path
+        self.show_progress = show_process_bar
         self.client = BKClient()
 
-    def __process_state(self, cursor, bounds, states):
-        lat_start, lon_start = bounds[0]
-        lat_end, lon_end = bounds[1]
+    def __process_state(self, cursor, states):
+        if self.show_progress:
+            state_data = tqdm(states.items(), total=len(states))
+        else:
+            state_data = states.items()
 
-        stores = self.client.search_lat_lon(lat_start, lat_end, lon_start, lon_end)
+        for _, bounds in state_data:
+            lat_start, lon_start = bounds[0]
+            lat_end, lon_end = bounds[1]
 
-        for store_id, store_info in stores.items():
-            _id = store_info['_id']
-            city = store_info['physicalAddress']['city'].title().replace(',', '')
-            state_name = store_info['physicalAddress']['stateProvince']
-            postal_code = store_info['physicalAddress']['postalCode'].split('-')[0]
-            latitude = store_info['latitude']
-            longitude = store_info['longitude']
+            stores = self.client.search_lat_lon(lat_start, lat_end, lon_start, lon_end)
 
-            if state_name in states:
+            for store_id, store_info in stores.items():
+                _id = store_info['_id']
+                city = store_info['physicalAddress']['city'].title().replace(',', '')
+                state_name = store_info['physicalAddress']['stateProvince']
+                postal_code = store_info['physicalAddress']['postalCode'].split('-')[0]
+                latitude = store_info['latitude']
+                longitude = store_info['longitude']
+
+                if state_name in states:
+                    try:
+                        cursor.execute('INSERT INTO stores VALUES (?, ?, ?, ?, ?, ?, ?)',
+                                    (_id, store_id, city, state_name, postal_code, latitude, longitude))
+                    except sqlite3.IntegrityError:
+                        print(f"Duplicate entry for {_id}, skipping...")
+                else:   
+                    f = open('manual_review_required.txt', 'a')
+                    f.write(f"ID: {_id}\n")
+                    f.write(f"Store: {store_id}\n")
+                    f.write(f"State: {state_name}\n")
+                    f.write(f"Postal Code: {postal_code}\n")
+                    f.write(f"Lat: {latitude}\n")
+                    f.write(f"Long: {longitude}\n")
+                    f.write("------------------------------\n")
+                    f.close()
+
+    def __process_menu_scrape(self, store_ids, menu):
+        if self.show_progress:
+            stores = tqdm(store_ids, total=len(store_ids))
+        else:
+            stores = store_ids
+
+        for store_id in stores:
+            try:
+                scraped_menu = self.client.get_menu(store_id)
+                if scraped_menu:
+                    menu[store_id] = scraped_menu
+            except Exception as e:
+                print(f"ERROR: {e}")
+
+    def __process_menus(self, menus, cursor):
+        if self.show_progress:
+            items = tqdm(menus.items(), total=len(menus))
+        else:
+            items = menus.items()
+
+        for store_id, menu in items:
+            for item in menu:
+                item_id = item.get('id')
+                price = item.get('price')
+
+                if price is None:
+                    continue
+
+                price_min = price.get('min')
+                price_max = price.get('max')
+                price_default = price.get('default')
+
+                if price_min * price_max * price_default == 0:
+                    continue
+
                 try:
-                    cursor.execute('INSERT INTO stores VALUES (?, ?, ?, ?, ?, ?, ?)',
-                                   (_id, store_id, city, state_name, postal_code, latitude, longitude))
-                except sqlite3.IntegrityError:
-                    print(f"Duplicate entry for {_id}, skipping...")
-            else:   
-                # Output to text file
-                f = open('manual_review_required.txt', 'a')
-                f.write(f"ID: {_id}\n")
-                f.write(f"Store: {store_id}\n")
-                f.write(f"State: {state_name}\n")
-                f.write(f"Postal Code: {postal_code}\n")
-                f.write(f"Lat: {latitude}\n")
-                f.write(f"Long: {longitude}\n")
-                f.write("------------------------------\n")
-                f.close()
+                    cursor.execute("INSERT OR REPLACE INTO menus VALUES (?, ?, ?, ?, ?)",
+                               (store_id, item_id, price_min, price_max, price_default))
+                except sqlite3.Error as e:
+                    print(f"An error occurred: {e}")
 
-    def store_scraper(self, show_progress_bar=True):
+
+    def store_scraper(self):
         states = {
             'Alabama': ((30.137521, -88.473227), (35.008028, -84.888246)),
             'Alaska': ((51.209712, -179.148909), (71.538800, -129.979510)),
@@ -49,7 +97,6 @@ class BKDataScraping:
             'Colorado': ((36.993076, -109.045223), (41.003444, -102.041524)),
             'Connecticut': ((40.950943, -73.727775), (42.050587, -71.786994)),
             'Delaware': ((38.451013, -75.789023), (39.839007, -75.048939)),
-            'District Of Columbia': ((38.791645, -77.119759), (38.995036, -76.909393)),
             'Florida': ((24.396308, -87.634938), (31.000968, -80.031362)),
             'Georgia': ((30.357851, -85.605165), (35.000659, -80.839729)),
             'Hawaii': ((18.910361, -178.334698), (28.402123, -154.806773)),
@@ -109,13 +156,74 @@ class BKDataScraping:
             )
         ''')
 
-        if show_progress_bar:
-            for state, bounds in tqdm(states.items(), total=len(states)):
-                self.__process_state(cursor, bounds, states)
-        else:
-            for state, bounds in states.items():
-                self.__process_state(cursor, bounds, states)
+        self.__process_state(cursor, states)
 
         conn.commit()
         conn.close()
         print("Store scraping completed!")
+
+    def menu_scraper(self):
+        conn = sqlite3.connect(self.database_path)
+        cursor = conn.cursor()
+
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS menus (
+                store_id INTEGER,
+                item_id TEXT,
+                price_min INTEGER,
+                price_max INTEGER,
+                price_default INTEGER,
+                PRIMARY KEY (store_id, item_id)
+            )
+        ''')
+
+        cursor.execute('''
+            SELECT store_id
+            FROM stores
+        ''')
+
+        store_ids = {row[0] for row in cursor.fetchall()}
+        menus = {}
+        self.__process_menu_scrape(store_ids, menus)
+        self.__process_menus(menus, cursor)
+
+        conn.commit()
+        cursor.close()
+        conn.close()
+        print("Menu scraping completed!")
+
+    def item_info_scraper(self, threads=1):
+        conn = sqlite3.connect(self.database_path)
+        cursor = conn.cursor()
+
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS items (
+                item_id TEXT PRIMARY KEY,
+                item_name TEXT
+            )
+        ''')
+
+        cursor.execute('''
+            SELECT item_id
+            FROM menus
+                       ''')
+
+        item_ids_short = {row[0] for row in cursor.fetchall()}
+        for id in tqdm(item_ids_short, total=len(item_ids_short)):
+            itemInfo = self.client.get_item_info(id)
+            item_id = itemInfo[0]
+            if item_id == id:
+                item_name = itemInfo[1]
+                
+                try:
+                    cursor.execute('''
+                        INSERT INTO items (item_id, item_name)
+                        VALUES (?, ?)
+                    ''', (item_id, item_name))
+                except sqlite3.IntegrityError as e:
+                    print(f"Error: {e}")
+
+        conn.commit()
+        cursor.close() 
+        conn.close()       
+        print("Item info scraping completed!")
