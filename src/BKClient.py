@@ -1,3 +1,10 @@
+import sys
+
+# Allow this to work whether launching from test harness
+# or from command prompt or from VS "run" button
+sys.path.append("src")
+sys.path.append(".")
+
 import requests
 import json
 from concurrent.futures import ThreadPoolExecutor

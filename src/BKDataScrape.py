@@ -1,6 +1,8 @@
+import itertools
 import sqlite3
 from BKClient import BKClient
 from tqdm import tqdm
+from itertools import chain
 
 class BKDataScraping:
     def __init__(self, database_path, show_process_bar=False):
@@ -10,7 +12,7 @@ class BKDataScraping:
 
     def __process_state(self, cursor, states):
         if self.show_progress:
-            state_data = tqdm(states.items(), total=len(states))
+            state_data = tqdm(states.items(), total=len(states), desc="Store Scraping")
         else:
             state_data = states.items()
 
@@ -47,7 +49,7 @@ class BKDataScraping:
 
     def __process_menu_scrape(self, store_ids, menu):
         if self.show_progress:
-            stores = tqdm(store_ids, total=len(store_ids))
+            stores = tqdm(store_ids, total=len(store_ids), desc="Menu Scraping")
         else:
             stores = store_ids
 
@@ -61,7 +63,7 @@ class BKDataScraping:
 
     def __process_menus(self, menus, cursor):
         if self.show_progress:
-            items = tqdm(menus.items(), total=len(menus))
+            items = tqdm(menus.items(), total=len(menus), desc="Item Scraping")
         else:
             items = menus.items()
 
@@ -85,7 +87,19 @@ class BKDataScraping:
                                (store_id, item_id, price_min, price_max, price_default))
                 except sqlite3.Error as e:
                     print(f"An error occurred: {e}")
-
+    
+    def __get_item_id(self, item_names, cur):
+        if self.show_progress:
+            items = tqdm(item_names, total=len(item_names), desc="Item ID Scrape")
+        else:
+            items = item_names
+        
+        item_ids = [] 
+        for item in items:  
+            cur.execute("SELECT item_id FROM items WHERE item_name = ?", (item,)) 
+            ids = [row[0] for row in cur.fetchall()]
+            item_ids.append(ids)  
+        return item_ids
 
     def store_scraper(self):
         states = {
@@ -209,7 +223,7 @@ class BKDataScraping:
                        ''')
 
         item_ids_short = {row[0] for row in cursor.fetchall()}
-        for id in tqdm(item_ids_short, total=len(item_ids_short)):
+        for id in tqdm(item_ids_short, total=len(item_ids_short), desc="Inserting Item Data"):
             itemInfo = self.client.get_item_info(id)
             item_id = itemInfo[0]
             if item_id == id:
@@ -227,3 +241,78 @@ class BKDataScraping:
         cursor.close() 
         conn.close()       
         print("Item info scraping completed!")
+
+    def validate_database(self):
+        conn = sqlite3.connect(self.database_path)
+        cursor = conn.cursor()
+        
+        total_deleted_rows = 0
+        
+        pbar = tqdm(total=4, desc="Validating database")
+        
+        try:
+            cursor.execute('''
+                DELETE FROM stores 
+                WHERE store_id NOT IN (SELECT store_id FROM menus)
+            ''')
+            total_deleted_rows += cursor.rowcount
+            conn.commit()
+        except sqlite3.IntegrityError as e:
+            print(f"Error: {e}")
+
+        pbar.update(1)
+        
+        cursor.execute("""
+            SELECT i.item_name
+            FROM items i
+            JOIN menus m ON i.item_id = m.item_id
+            JOIN stores s ON m.store_id = s.store_id
+            WHERE m.price_default > 100 AND i.item_name NOT LIKE '%Meal%'
+            GROUP BY i.item_name
+            HAVING COUNT(DISTINCT s.state) = (SELECT COUNT(DISTINCT state) FROM stores);
+        """)
+        
+        rows = cursor.fetchall()
+        item_names = [row[0] for row in rows]       
+        item_ids = self.__get_item_id(item_names, cursor)
+        
+        flattened_item_ids = chain.from_iterable(item_ids)
+        item_ids = list(set(filter(lambda x: x.startswith('item_'), flattened_item_ids)))
+        pbar.update(1)
+
+        if item_ids:
+            try: 
+                in_params = tuple(item_ids)
+                cursor.execute("DELETE FROM items WHERE item_id NOT IN (%s)" % (" , ".join(["?"] * len(in_params))), in_params)
+                total_deleted_rows += cursor.rowcount
+                conn.commit()
+            except sqlite3.Error as e:
+                print(f"Error deleting items: {e}")
+        else:
+            print("No items to delete.")
+
+        pbar.update(1)
+
+        cursor.execute("SELECT item_id FROM items")
+        rows = cursor.fetchall()
+        item_ids = [row[0] for row in rows]
+        
+        if item_ids:
+            try:
+                in_params = tuple(item_ids)
+                cursor.execute("DELETE FROM menus WHERE item_id NOT IN (%s)" % (" , ".join(["?"] * len(in_params))), in_params)
+                total_deleted_rows += cursor.rowcount
+                conn.commit()
+            except sqlite3.Error as e:
+                print(f"Error deleting menus: {e}")
+        else:
+            print("No menus to delete.")
+            
+        pbar.update(1)
+
+        cursor.close()
+        conn.close() 
+        pbar.close()
+
+        print(f"\nTotal database entries removed: {total_deleted_rows}")
+        print("Database validation completed!")
