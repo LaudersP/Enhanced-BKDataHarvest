@@ -1,4 +1,4 @@
-from BKDataScrap import BKDataScraping
+from BKDataScrape import BKDataScraping
 
 if __name__ == "__main__":
     bk_data_gathering = BKDataScraping("database.db", True)
