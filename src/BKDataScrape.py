@@ -10,50 +10,52 @@ class BKDataScraping:
         self.show_progress = show_process_bar
         self.client = BKClient()
 
-    def __process_state(self, cursor, states):
+    def __process_items(self, items, process_func, desc):
         if self.show_progress:
-            state_data = tqdm(states.items(), total=len(states), desc="Store Scraping")
-        else:
-            state_data = states.items()
+            items = tqdm(items, total=len(items), desc=desc)
+        
+        for item in items:
+            process_func(item)
 
-        for _, bounds in state_data:
-            lat_start, lon_start = bounds[0]
-            lat_end, lon_end = bounds[1]
-
+    def __process_state(self, cursor, states):
+        def process_state(state):
+            lat_start, lon_start = state[1][0]
+            lat_end, lon_end = state[1][1]
             stores = self.client.search_lat_lon(lat_start, lat_end, lon_start, lon_end)
 
-            for store_id, store_info in stores.items():
-                _id = store_info['_id']
-                city = store_info['physicalAddress']['city'].title().replace(',', '')
-                state_name = store_info['physicalAddress']['stateProvince']
-                postal_code = store_info['physicalAddress']['postalCode'].split('-')[0]
-                latitude = store_info['latitude']
-                longitude = store_info['longitude']
+            insert_query = '''
+                INSERT INTO stores (_id, store_id, city, state, postal_code, latitude, longitude)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            '''
 
-                if state_name in states:
-                    try:
-                        cursor.execute('INSERT INTO stores VALUES (?, ?, ?, ?, ?, ?, ?)',
-                                    (_id, store_id, city, state_name, postal_code, latitude, longitude))
-                    except sqlite3.IntegrityError:
-                        print(f"Duplicate entry for {_id}, skipping...")
-                else:   
-                    f = open('manual_review_required.txt', 'a')
-                    f.write(f"ID: {_id}\n")
-                    f.write(f"Store: {store_id}\n")
-                    f.write(f"State: {state_name}\n")
-                    f.write(f"Postal Code: {postal_code}\n")
-                    f.write(f"Lat: {latitude}\n")
-                    f.write(f"Long: {longitude}\n")
-                    f.write("------------------------------\n")
-                    f.close()
+            for store_id, store_info in stores.items():
+                    _id = store_info['_id']
+                    city = store_info['physicalAddress']['city'].title().replace(',', '')
+                    state_name = store_info['physicalAddress']['stateProvince']
+                    postal_code = store_info['physicalAddress']['postalCode'].split('-')[0]
+                    latitude = store_info['latitude']
+                    longitude = store_info['longitude']
+
+                    if state_name in states:
+                        try:
+                            cursor.execute(insert_query, (_id, store_id, city, state_name, postal_code, latitude, longitude))
+                        except sqlite3.IntegrityError:
+                            print(f"Duplicate entry for {_id}, skipping...")
+                    else:   
+                        f = open('manual_review_required.txt', 'a')
+                        f.write(f"ID: {_id}\n")
+                        f.write(f"Store: {store_id}\n")
+                        f.write(f"State: {state_name}\n")
+                        f.write(f"Postal Code: {postal_code}\n")
+                        f.write(f"Lat: {latitude}\n")
+                        f.write(f"Long: {longitude}\n")
+                        f.write("------------------------------\n")
+                        f.close()
+
+        self.__process_items(states.items(), process_state, "Store Scraping")
 
     def __process_menu_scrape(self, store_ids, menu):
-        if self.show_progress:
-            stores = tqdm(store_ids, total=len(store_ids), desc="Menu Scraping")
-        else:
-            stores = store_ids
-
-        for store_id in stores:
+        def process_store(store_id):
             try:
                 scraped_menu = self.client.get_menu(store_id)
                 if scraped_menu:
@@ -61,13 +63,16 @@ class BKDataScraping:
             except Exception as e:
                 print(f"ERROR: {e}")
 
-    def __process_menus(self, menus, cursor):
-        if self.show_progress:
-            items = tqdm(menus.items(), total=len(menus), desc="Item Scraping")
-        else:
-            items = menus.items()
+        self.__process_items(store_ids, process_store, "Menu Scraping")
 
-        for store_id, menu in items:
+    def __process_menus(self, menus, cursor):
+        insert_query = '''
+            INSERT OR REPLACE INTO menus (store_id, item_id, price_min, price_max, price_default)
+            VALUES (?, ?, ?, ?, ?)
+        '''
+
+        def process_menu(menu):
+            store_id, menu = menu
             for item in menu:
                 item_id = item.get('id')
                 price = item.get('price')
@@ -83,23 +88,25 @@ class BKDataScraping:
                     continue
 
                 try:
-                    cursor.execute("INSERT OR REPLACE INTO menus VALUES (?, ?, ?, ?, ?)",
-                               (store_id, item_id, price_min, price_max, price_default))
+                    cursor.execute(insert_query, (store_id, item_id, price_min, price_max, price_default))
                 except sqlite3.Error as e:
                     print(f"An error occurred: {e}")
+
+        self.__process_items(menus.items(), process_menu, "Item Scraping")
     
     def __get_item_id(self, item_names, cur):
-        if self.show_progress:
-            items = tqdm(item_names, total=len(item_names), desc="Item ID Scrape")
-        else:
-            items = item_names
-        
-        item_ids = [] 
-        for item in items:  
-            cur.execute("SELECT item_id FROM items WHERE item_name = ?", (item,)) 
+        select_query = '''
+            SELECT item_id
+            FROM items
+            WHERE item_name = ?
+        '''
+
+        def process_item(item):
+            cur.execute(select_query, (item,))
             ids = [row[0] for row in cur.fetchall()]
-            item_ids.append(ids)  
-        return item_ids
+            return ids
+
+        return [process_item(item) for item in item_names]
 
     def store_scraper(self):
         states = {
@@ -191,10 +198,12 @@ class BKDataScraping:
             )
         ''')
 
-        cursor.execute('''
+        select_query = '''
             SELECT store_id
             FROM stores
-        ''')
+        '''
+
+        cursor.execute(select_query)
 
         store_ids = {row[0] for row in cursor.fetchall()}
         menus = {}
@@ -217,10 +226,17 @@ class BKDataScraping:
             )
         ''')
 
-        cursor.execute('''
+        select_query = '''
             SELECT item_id
             FROM menus
-                       ''')
+        '''
+
+        insert_query = '''
+            INSERT INTO items (item_id, item_name)
+            VALUES (?, ?)
+        '''
+
+        cursor.execute(select_query)
 
         item_ids_short = {row[0] for row in cursor.fetchall()}
         for id in tqdm(item_ids_short, total=len(item_ids_short), desc="Inserting Item Data"):
@@ -230,10 +246,7 @@ class BKDataScraping:
                 item_name = itemInfo[1]
                 
                 try:
-                    cursor.execute('''
-                        INSERT INTO items (item_id, item_name)
-                        VALUES (?, ?)
-                    ''', (item_id, item_name))
+                    cursor.execute(insert_query, (item_id, item_name))
                 except sqlite3.IntegrityError as e:
                     print(f"Error: {e}")
 
@@ -249,20 +262,22 @@ class BKDataScraping:
         total_deleted_rows = 0
         
         pbar = tqdm(total=4, desc="Validating database")
+
+        delete_stores_query = '''
+            DELETE FROM stores
+            WHERE store_id NOT IN (SELECT store_id
+                                    FROM menus)
+        '''
         
         try:
-            cursor.execute('''
-                DELETE FROM stores 
-                WHERE store_id NOT IN (SELECT store_id FROM menus)
-            ''')
+            cursor.execute(delete_stores_query)
             total_deleted_rows += cursor.rowcount
             conn.commit()
         except sqlite3.IntegrityError as e:
             print(f"Error: {e}")
 
         pbar.update(1)
-        
-        cursor.execute("""
+        select_const_item_query = """
             SELECT i.item_name
             FROM items i
             JOIN menus m ON i.item_id = m.item_id
@@ -270,7 +285,9 @@ class BKDataScraping:
             WHERE m.price_default > 100 AND i.item_name NOT LIKE '%Meal%'
             GROUP BY i.item_name
             HAVING COUNT(DISTINCT s.state) = (SELECT COUNT(DISTINCT state) FROM stores);
-        """)
+        """
+        
+        cursor.execute(select_const_item_query)
         
         rows = cursor.fetchall()
         item_names = [row[0] for row in rows]       
@@ -292,8 +309,12 @@ class BKDataScraping:
             print("No items to delete.")
 
         pbar.update(1)
+        select_item_id_query = '''
+            SELECT item_id
+            FROM items
+        '''
 
-        cursor.execute("SELECT item_id FROM items")
+        cursor.execute(select_item_id_query)
         rows = cursor.fetchall()
         item_ids = [row[0] for row in rows]
         
