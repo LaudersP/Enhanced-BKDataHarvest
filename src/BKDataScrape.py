@@ -1,6 +1,9 @@
-import itertools
+import json
+import matplotlib.pyplot as plt
 import sqlite3
 from BKClient import BKClient
+from matplotlib.colors import to_hex
+from matplotlib import gridspec as gridspec
 from tqdm import tqdm
 from itertools import chain
 
@@ -260,7 +263,6 @@ class BKDataScraping:
         cursor = conn.cursor()
         
         total_deleted_rows = 0
-        
         pbar = tqdm(total=4, desc="Validating database")
 
         delete_stores_query = '''
@@ -273,63 +275,65 @@ class BKDataScraping:
             cursor.execute(delete_stores_query)
             total_deleted_rows += cursor.rowcount
             conn.commit()
-        except sqlite3.IntegrityError as e:
+            pbar.update(1)
+        except sqlite3.OperationalError as e:
             print(f"Error: {e}")
 
-        pbar.update(1)
-        select_const_item_query = """
-            SELECT i.item_name
-            FROM items i
-            JOIN menus m ON i.item_id = m.item_id
-            JOIN stores s ON m.store_id = s.store_id
-            WHERE m.price_default > 100 AND i.item_name NOT LIKE '%Meal%'
-            GROUP BY i.item_name
-            HAVING COUNT(DISTINCT s.state) = (SELECT COUNT(DISTINCT state) FROM stores);
-        """
         
-        cursor.execute(select_const_item_query)
-        
-        rows = cursor.fetchall()
-        item_names = [row[0] for row in rows]       
-        item_ids = self.__get_item_id(item_names, cursor)
-        
-        flattened_item_ids = chain.from_iterable(item_ids)
-        item_ids = list(set(filter(lambda x: x.startswith('item_'), flattened_item_ids)))
-        pbar.update(1)
+        select_unused_items_query = '''
+            SELECT item_name 
+            FROM items
+            WHERE item_name NOT IN ('Whopper', '16 Pc. Chicken Nuggets', 'Big Fish', 'Large Coca-Cola')
+        '''
+        try:
+            cursor.execute(select_unused_items_query)
+            unused_items = [row[0] for row in cursor.fetchall()]
 
-        if item_ids:
-            try: 
-                in_params = tuple(item_ids)
-                cursor.execute("DELETE FROM items WHERE item_id NOT IN (%s)" % (" , ".join(["?"] * len(in_params))), in_params)
-                total_deleted_rows += cursor.rowcount
-                conn.commit()
-            except sqlite3.Error as e:
-                print(f"Error deleting items: {e}")
-        else:
-            print("No items to delete.")
+            pbar.update(1)
+        
+            if unused_items:
+                unused_item_ids = self.__get_item_id(unused_items, cursor)
+                flattened_unused_item_ids = chain.from_iterable(unused_item_ids)
+                unused_item_ids = list(set(filter(lambda x: x.startswith('item_'), flattened_unused_item_ids)))
+            
+                try: 
+                    in_params = tuple(unused_item_ids)    
+                    cursor.execute("DELETE FROM items WHERE item_id IN (%s)" % (" , ".join(["?"] * len(in_params))), in_params)
+                    total_deleted_rows += cursor.rowcount
+                    conn.commit()
+                except sqlite3.Error as e:
+                    print(f"Error deleting unused items: {e}")
+            else:
+                print("\nNo unused items to delete.")
 
-        pbar.update(1)
+            pbar.update(1)
+        except sqlite3.OperationalError as e:
+            print(f"Error: {e}")
+
         select_item_id_query = '''
             SELECT item_id
             FROM items
         '''
 
-        cursor.execute(select_item_id_query)
-        rows = cursor.fetchall()
-        item_ids = [row[0] for row in rows]
-        
-        if item_ids:
-            try:
-                in_params = tuple(item_ids)
-                cursor.execute("DELETE FROM menus WHERE item_id NOT IN (%s)" % (" , ".join(["?"] * len(in_params))), in_params)
-                total_deleted_rows += cursor.rowcount
-                conn.commit()
-            except sqlite3.Error as e:
-                print(f"Error deleting menus: {e}")
-        else:
-            print("No menus to delete.")
+        try:
+            cursor.execute(select_item_id_query)
+            rows = cursor.fetchall()
+            item_ids = [row[0] for row in rows]
             
-        pbar.update(1)
+            if item_ids:
+                try:
+                    in_params = tuple(item_ids)
+                    cursor.execute("DELETE FROM menus WHERE item_id NOT IN (%s)" % (" , ".join(["?"] * len(in_params))), in_params)
+                    total_deleted_rows += cursor.rowcount
+                    conn.commit()
+                except sqlite3.Error as e:
+                    print(f"Error deleting menus: {e}")
+            else:
+                print("No menus to delete.")
+                
+            pbar.update(1)
+        except sqlite3.OperationalError as e:
+            print(f"Error: {e}")
 
         cursor.close()
         conn.close() 
@@ -337,3 +341,253 @@ class BKDataScraping:
 
         print(f"\nTotal database entries removed: {total_deleted_rows}")
         print("Database validation completed!")
+
+    def update_menu_prices(self):
+        conn = sqlite3.connect(self.database_path)
+        cursor = conn.cursor()
+
+        select_query = '''
+            SELECT store_id, item_id
+            FROM menus
+        '''
+
+        cursor.execute(select_query)
+
+        store_item_pairs = [(row[0], row[1]) for row in cursor.fetchall()]
+        updated_menus = {}
+
+        def process_store_item_pair(store_item_pair):
+            store_id, item_id = store_item_pair
+            try:
+                scraped_menu = self.client.get_menu(store_id)
+                if scraped_menu:
+                    updated_menus[store_id] = scraped_menu
+            except Exception as e:
+                print(f"ERROR: {e}")
+
+        self.__process_items(store_item_pairs, process_store_item_pair, "Updating Menu Prices")
+
+        update_query = '''
+            UPDATE menus
+            SET price_min = ?, price_max = ?, price_default = ?
+            WHERE store_id = ? AND item_id = ?
+        '''
+
+        def process_updated_menu(menu):
+            store_id, menu = menu
+            for item in menu:
+                item_id = item.get('id')
+                price = item.get('price')
+
+                if price is None:
+                    continue
+
+                price_min = price.get('min')
+                price_max = price.get('max')
+                price_default = price.get('default')
+
+                if price_min * price_max * price_default == 0:
+                    continue
+
+                try:
+                    cursor.execute(update_query, (price_min, price_max, price_default, store_id, item_id))
+                except sqlite3.Error as e:
+                    print(f"An error occurred: {e}")
+
+        self.__process_items(updated_menus.items(), process_updated_menu, "Updating Menu Prices")
+
+        conn.commit()
+        cursor.close()
+        conn.close()
+        print("Menu prices updated!")
+
+    def calculate_average_prices(self, json_filename):
+        conn = sqlite3.connect(self.database_path)
+        cursor = conn.cursor()
+
+        # Create the average_prices table
+        create_table_query = '''
+            CREATE TABLE IF NOT EXISTS average_prices (
+                item_name TEXT,
+                state TEXT,
+                average_price REAL,
+                PRIMARY KEY (item_name, state)
+            );
+        '''
+        cursor.execute(create_table_query)
+
+        # Insert the average prices for specific items into the table
+        insert_query = '''
+            INSERT OR REPLACE INTO average_prices (item_name, state, average_price)
+            SELECT i.item_name, s.state, AVG(m.price_default) as average_price
+            FROM stores s
+            JOIN menus m ON s.store_id = m.store_id
+            JOIN items i ON m.item_id = i.item_id
+            WHERE i.item_name IN ('Whopper', '16 Pc. Chicken Nuggets', 'Big Fish', 'Large Coca-Cola')
+            GROUP BY i.item_name, s.state;
+        '''
+        cursor.execute(insert_query)
+
+        # Retrieve the average prices for those items grouped by state
+        select_query = '''
+            SELECT state,
+                AVG(CASE WHEN item_name = 'Whopper' THEN average_price ELSE NULL END) AS whopper_avg,
+                AVG(CASE WHEN item_name = '16 Pc. Chicken Nuggets' THEN average_price ELSE NULL END) AS nuggets_avg,
+                AVG(CASE WHEN item_name = 'Big Fish' THEN average_price ELSE NULL END) AS big_fish_avg,
+                AVG(CASE WHEN item_name = 'Large Coca-Cola' THEN average_price ELSE NULL END) as coke_avg
+            FROM average_prices
+            GROUP BY state
+            ORDER BY state ASC;
+        '''
+        cursor.execute(select_query)
+
+        rows = cursor.fetchall()
+        result = [[row[0], row[1], row[2], row[3], row[4]] for row in rows]
+
+        with open(json_filename, 'w') as json_file:
+            json.dump(result, json_file)
+
+        conn.commit()
+        cursor.close()
+        conn.close()
+
+        return result
+    
+    def plot_states(self):
+        conn = sqlite3.connect(self.database_path)
+        cursor = conn.cursor()
+
+        select_query = '''
+            SELECT state, COUNT(*) as count
+            FROM stores
+            GROUP BY state
+        '''
+
+        cursor.execute(select_query)
+        results = cursor.fetchall()
+        conn.close()
+
+        states = [row[0] for row in results]
+        counts = [row[1] for row in results]
+
+        plt.figure(figsize=(10, 6))
+        plt.bar(states, counts, color='skyblue')
+        plt.xlabel('State')
+        plt.ylabel('Count')
+        plt.title('Number of Burger Kings in Each State')
+        plt.xticks(rotation=90)
+        plt.tight_layout()
+        plt.show()
+
+    def plot_locations(self):
+        conn = sqlite3.connect(self.database_path)
+        cursor = conn.cursor()
+
+        select_query = '''
+            SELECT latitude, longitude, state
+            FROM stores
+        '''
+        cursor.execute(select_query)
+        data = cursor.fetchall()
+
+        lat_contiguous = []
+        long_contiguous = []
+        lat_hawaii = []
+        long_hawaii = []
+        lat_alaska = []
+        long_alaska = []
+        for row in data:
+            if row[2] == 'Hawaii':
+                lat_hawaii.append(row[0])
+                long_hawaii.append(row[1])
+            elif row[2] == 'Alaska':
+                lat_alaska.append(row[0])
+                long_alaska.append(row[1])
+            else:
+                lat_contiguous.append(row[0])
+                long_contiguous.append(row[1])
+
+        # Close the database connection
+        conn.close()
+
+        # Create the plot with a custom gridspec
+        fig = plt.figure(figsize=(15, 7))
+        gs = gridspec.GridSpec(2, 3, width_ratios=[1, 2, 2], height_ratios=[1, 1])
+
+        # Alaska
+        ax0 = fig.add_subplot(gs[0, 0])
+        ax0.scatter(long_alaska, lat_alaska, s=10)  # Set the marker size to 72
+        ax0.set_xlabel('Longitude')
+        ax0.set_ylabel('Latitude')
+        ax0.set_title('Alaska')
+        ax0.grid(True)
+
+        # Hawaii
+        ax1 = fig.add_subplot(gs[1, 0])
+        ax1.scatter(long_hawaii, lat_hawaii, s=10)  # Set the marker size to 72
+        ax1.set_xlabel('Longitude')
+        ax1.set_ylabel('Latitude')
+        ax1.set_title('Hawaii')
+        ax1.grid(True)
+
+        # Contiguous US
+        ax2 = fig.add_subplot(gs[:, 1:])
+        ax2.scatter(long_contiguous, lat_contiguous, s=10)  # Set the marker size to 72
+        ax2.set_xlabel('Longitude')
+        ax2.set_ylabel('Latitude')
+        ax2.set_title('Contiguous US')
+        ax2.grid(True)
+
+        plt.tight_layout()
+        plt.show()
+    
+    def plot_average_prices(self, data):
+        figsize = (18, 9)
+        fig, axes = plt.subplots(nrows=2, ncols=2, figsize=figsize)
+        fig.subplots_adjust(wspace=0.3, hspace=0.4)
+
+        states = [row[0] for row in data]
+        whopper_avg = [row[1] for row in data]
+        nuggets_avg = [row[2] for row in data]
+        big_fish_avg = [row[3] for row in data]
+        coke_avg = [row[4] for row in data]
+
+        max_indices_whopper = [whopper_avg.index(max(whopper_avg))]
+        min_indices_whopper = [whopper_avg.index(min(whopper_avg))]
+        max_indices_nuggets = [nuggets_avg.index(max(nuggets_avg))]
+        min_indices_nuggets = [nuggets_avg.index(min(nuggets_avg))]
+        max_indices_big_fish = [big_fish_avg.index(max(big_fish_avg))]
+        min_indices_big_fish = [big_fish_avg.index(min(big_fish_avg))]
+        max_indices_coke = [coke_avg.index(max(coke_avg))]
+        min_indices_coke = [coke_avg.index(min(coke_avg))]
+    
+        highlight_color_max = 'red'
+        highlight_color_min = 'green'
+
+        axes[0, 0].bar(states, whopper_avg, color=[highlight_color_max if i == max_indices_whopper[0] else highlight_color_min if i == min_indices_whopper[0] else to_hex('C0') for i, _ in enumerate(whopper_avg)])
+        axes[0, 0].set_title('Average Price of Whopper')
+        axes[0, 0].set_xlabel('State')
+        axes[0, 0].set_ylabel('Price in Cents')
+        axes[0, 0].set_xticklabels(states, rotation=90)
+    
+        axes[0, 1].bar(states, nuggets_avg, color=[highlight_color_max if i == max_indices_nuggets[0] else highlight_color_min if i == min_indices_nuggets[0] else to_hex('C0') for i, _ in enumerate(nuggets_avg)])
+        axes[0, 1].set_title('Average Price of 16 Pc. Chicken Nuggets')
+        axes[0, 1].set_xlabel('State')  
+        axes[0, 1].set_ylabel('Price in Cents')
+        axes[0, 1].set_xticklabels(states, rotation=90)
+        
+        axes[1, 0].bar(states, big_fish_avg, color=[highlight_color_max if i == max_indices_big_fish[0] else highlight_color_min if i == min_indices_big_fish[0] else to_hex('C0') for i, _ in enumerate(big_fish_avg)])
+        axes[1, 0].set_title('Average Price of Big Fish')
+        axes[1, 0].set_xlabel('State')  
+        axes[1, 0].set_ylabel('Price in Cents')
+        axes[1, 0].set_xticklabels(states, rotation=90)  
+        
+        axes[1, 1].bar(states, coke_avg, color=[highlight_color_max if i == max_indices_coke[0] else highlight_color_min if i == min_indices_coke[0] else to_hex('C0') for i, _ in enumerate(coke_avg)])
+        axes[1, 1].set_title('Average Price of Large Coke')
+        axes[1, 1].set_xlabel('State')
+        axes[1, 1].set_ylabel('Price in Cents')  
+        axes[1, 1].set_xticklabels(states, rotation=90)  
+        
+        fig.legend(loc='upper center', bbox_to_anchor=(0.5, 1.14), ncol=4)  
+        plt.tight_layout()
+        plt.show()
