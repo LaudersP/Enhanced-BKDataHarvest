@@ -450,8 +450,6 @@ class BKDataScraping:
         conn.commit()
         cursor.close()
         conn.close()
-
-        return result
     
     def plot_states(self):
         conn = sqlite3.connect(self.database_path)
@@ -541,7 +539,10 @@ class BKDataScraping:
         plt.tight_layout()
         plt.show()
     
-    def plot_average_prices(self, data):
+    def plot_average_prices(self, json_file_path):
+        with open(json_file_path, 'r') as file:
+            data = json.load(file)
+
         figsize = (18, 9)
         fig, axes = plt.subplots(nrows=2, ncols=2, figsize=figsize)
         fig.subplots_adjust(wspace=0.3, hspace=0.4)
@@ -560,7 +561,7 @@ class BKDataScraping:
         min_indices_big_fish = [big_fish_avg.index(min(big_fish_avg))]
         max_indices_coke = [coke_avg.index(max(coke_avg))]
         min_indices_coke = [coke_avg.index(min(coke_avg))]
-    
+
         highlight_color_max = 'red'
         highlight_color_min = 'green'
 
@@ -569,25 +570,25 @@ class BKDataScraping:
         axes[0, 0].set_xlabel('State')
         axes[0, 0].set_ylabel('Price in Cents')
         axes[0, 0].set_xticklabels(states, rotation=90)
-    
+
         axes[0, 1].bar(states, nuggets_avg, color=[highlight_color_max if i == max_indices_nuggets[0] else highlight_color_min if i == min_indices_nuggets[0] else to_hex('C0') for i, _ in enumerate(nuggets_avg)])
         axes[0, 1].set_title('Average Price of 16 Pc. Chicken Nuggets')
         axes[0, 1].set_xlabel('State')  
         axes[0, 1].set_ylabel('Price in Cents')
         axes[0, 1].set_xticklabels(states, rotation=90)
-        
+
         axes[1, 0].bar(states, big_fish_avg, color=[highlight_color_max if i == max_indices_big_fish[0] else highlight_color_min if i == min_indices_big_fish[0] else to_hex('C0') for i, _ in enumerate(big_fish_avg)])
         axes[1, 0].set_title('Average Price of Big Fish')
         axes[1, 0].set_xlabel('State')  
         axes[1, 0].set_ylabel('Price in Cents')
         axes[1, 0].set_xticklabels(states, rotation=90)  
-        
+
         axes[1, 1].bar(states, coke_avg, color=[highlight_color_max if i == max_indices_coke[0] else highlight_color_min if i == min_indices_coke[0] else to_hex('C0') for i, _ in enumerate(coke_avg)])
         axes[1, 1].set_title('Average Price of Large Coke')
         axes[1, 1].set_xlabel('State')
         axes[1, 1].set_ylabel('Price in Cents')  
         axes[1, 1].set_xticklabels(states, rotation=90)  
-        
+
         fig.legend(loc='upper center', bbox_to_anchor=(0.5, 1.14), ncol=4)  
         plt.tight_layout()
         plt.show()
