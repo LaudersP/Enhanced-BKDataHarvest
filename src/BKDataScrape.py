@@ -346,65 +346,6 @@ class BKDataScraping:
         print(f"\nTotal database entries removed: {total_deleted_rows}")
         print("Database validation completed!")
 
-    def update_menu_prices(self):
-        conn = sqlite3.connect(self.database_path)
-        cursor = conn.cursor()
-
-        select_query = '''
-            SELECT store_id, item_id
-            FROM menus
-        '''
-
-        cursor.execute(select_query)
-
-        store_item_pairs = [(row[0], row[1]) for row in cursor.fetchall()]
-        updated_menus = {}
-
-        def process_store_item_pair(store_item_pair):
-            store_id, item_id = store_item_pair
-            try:
-                scraped_menu = self.client.get_menu(store_id)
-                if scraped_menu:
-                    updated_menus[store_id] = scraped_menu
-            except Exception as e:
-                print(f"ERROR: {e}")
-
-        self.__process_items(store_item_pairs, process_store_item_pair, "Updating Menu Prices")
-
-        update_query = '''
-            UPDATE menus
-            SET price_min = ?, price_max = ?, price_default = ?
-            WHERE store_id = ? AND item_id = ?
-        '''
-
-        def process_updated_menu(menu):
-            store_id, menu = menu
-            for item in menu:
-                item_id = item.get('id')
-                price = item.get('price')
-
-                if price is None:
-                    continue
-
-                price_min = price.get('min')
-                price_max = price.get('max')
-                price_default = price.get('default')
-
-                if price_min * price_max * price_default == 0:
-                    continue
-
-                try:
-                    cursor.execute(update_query, (price_min, price_max, price_default, store_id, item_id))
-                except sqlite3.Error as e:
-                    print(f"An error occurred: {e}")
-
-        self.__process_items(updated_menus.items(), process_updated_menu, "Updating Menu Prices")
-
-        conn.commit()
-        cursor.close()
-        conn.close()
-        print("Menu prices updated!")
-
     def generate_json(self, json_filename):
         __export_website_json(json_filename)
 
