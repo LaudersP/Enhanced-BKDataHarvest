@@ -10,7 +10,6 @@ Welcome to the Enhanced BKDataHarvest, an advanced fork of LLM Explorer's BKData
 - validate_database: Cleans up the database, excluding unneeded data for saving storage.
 - plot_states: Creates a bar graph of the number of stores per state.
 - plot_locations: Creates a plot map of the stores based on their latitude and longitude coordinates.
-- update_menu_prices: Updates item prices for menu data.
 - generate_json: Exports a JSON file for a data-displaying website.
 - plot_average_prices: Creates four bar graphs to display the state average price for four menu items.
 
