@@ -1,3 +1,10 @@
+import sys
+
+# Allow this to work whether launching from test harness
+# or from command prompt or from VS "run" button
+sys.path.append("src")
+sys.path.append(".")
+
 import requests
 import json
 from concurrent.futures import ThreadPoolExecutor
@@ -342,11 +349,11 @@ class BKClient:
         cur_lat = lat_start
         cur_lon = lon_start
 
-        while cur_lat > lat_end:
+        while cur_lat < lat_end:
             while cur_lon < lon_end:
                 intersections.append((cur_lat, cur_lon))
                 cur_lon += increment
-            cur_lat -= increment
+            cur_lat += increment
             cur_lon = lon_start
 
         bks = self.get_many_nearby_stores(intersections, threads=10)

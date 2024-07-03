@@ -1,3 +1,6 @@
 Temp/
 Scratch.ipynb
 __pycache__/
+
+*.db
+*.json
