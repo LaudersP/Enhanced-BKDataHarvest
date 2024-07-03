@@ -21,9 +21,6 @@ if __name__ == "__main__":
     # Plot a graph of locations
     bk_data_gathering.plot_locations()
 
-    # Update menu prices
-    bk_data_gathering.update_menu_prices()
-
     # Calculate average prices
     bk_data_gathering.generate_json("data.json")
 
