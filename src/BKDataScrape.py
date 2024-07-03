@@ -347,6 +347,71 @@ class BKDataScraping:
         print("Database validation completed!")
 
     def generate_json(self, json_filename):
+        def __export_website_json(json_filename):
+            conn = sqlite3.connect(self.database_path)
+            cursor = conn.cursor()
+
+            last_updated = datetime.date.today().isoformat()
+
+            cursor.execute("SELECT COUNT(*) FROM stores")
+            total_stores = cursor.fetchone()[0]
+
+            cursor.execute("SELECT COUNT(DISTINCT item_name) FROM items")
+            total_items = cursor.fetchone()[0]
+
+            cursor.execute("SELECT state, COUNT(*) as count FROM stores GROUP BY state")
+            states_data = cursor.fetchall()
+            states_stats = {state: count for state, count in states_data}
+
+            cursor.execute("""
+                SELECT DISTINCT items.item_name 
+                FROM items 
+                JOIN menus ON items.item_id = menus.item_id
+            """)
+            items_data = cursor.fetchall()
+            items = [row[0] for row in items_data]
+
+            categorized_items = __categorize_items(items)
+
+            json_data = {
+                "last_updated": last_updated,
+                "total_stores": total_stores,
+                "total_items": total_items,
+                "states_stats": states_stats,
+                "categories": categorized_items
+            }
+
+            with open(json_filename, "w") as outfile:
+                json.dump(json_data, outfile, indent=4)
+
+            conn.close()
+
+        def __categorize_items(items):
+            categories = {
+                "Burgers": ["Whopper", "Cheeseburger", "Hamburger", "Burger", "Rodeo", "Melt", "Bacon King"],
+                "Chicken & Fish": ["Chicken", "Nuggets", "Crispy", "Fish"],
+                "Breakfast": ["Biscuit", "Croissan'wich", "Burrito", "French Toast", "Egg"],
+                "Sides": ["Fries", "Onion Rings", "Hash Browns", "Mozzarella Fries", "Applesauce", "Have-sies\u2122"],
+                "Drinks & Coffee": ["Coffee", "Coke", "Sprite", "Dr Pepper", "Tea", "Juice", "Water", "Milk", "Coca-Cola", "Café"],
+                "Sweets": ["Pie", "Cookie", "Cone", "Shake"],
+                "Condiments": ["Dipping Sauce"],
+                
+                "Misc": []
+            }
+
+            categorized_items = {}
+            for item in items:
+                found = False
+                for category, keywords in categories.items():
+                    if any(keyword.lower() in item.lower() for keyword in keywords):
+                        categorized_items.setdefault(category, []).append(item)
+                        found = True
+                        break
+                if not found:
+                    categorized_items.setdefault("Misc", []).append(item)
+
+            return categorized_items
+        
         __export_website_json(json_filename)
 
         conn = sqlite3.connect(self.database_path)
@@ -399,71 +464,6 @@ class BKDataScraping:
 
         cursor.close()
         conn.close()
-        
-        def __export_website_json(self, json_filename):
-            conn = sqlite3.connect(self.database_path)
-            cursor = conn.cursor()
-
-            last_updated = datetime.date.today().isoformat()
-
-            cursor.execute("SELECT COUNT(*) FROM stores")
-            total_stores = cursor.fetchone()[0]
-
-            cursor.execute("SELECT COUNT(DISTINCT item_name) FROM items")
-            total_items = cursor.fetchone()[0]
-
-            cursor.execute("SELECT state, COUNT(*) as count FROM stores GROUP BY state")
-            states_data = cursor.fetchall()
-            states_stats = {state: count for state, count in states_data}
-
-            cursor.execute("""
-                SELECT DISTINCT items.item_name 
-                FROM items 
-                JOIN menus ON items.item_id = menus.item_id
-            """)
-            items_data = cursor.fetchall()
-            items = [row[0] for row in items_data]
-
-            categorized_items = __categorize_items(items)
-
-            json_data = {
-                "last_updated": last_updated,
-                "total_stores": total_stores,
-                "total_items": total_items,
-                "states_stats": states_stats,
-                "categories": categorized_items
-            }
-
-            with open(json_filename, "w") as outfile:
-                json.dump(json_data, outfile, indent=4)
-
-            conn.close()
-
-        def __categorize_items(self, items):
-            categories = {
-                "Burgers": ["Whopper", "Cheeseburger", "Hamburger", "Burger", "Rodeo", "Melt", "Bacon King"],
-                "Chicken & Fish": ["Chicken", "Nuggets", "Crispy", "Fish"],
-                "Breakfast": ["Biscuit", "Croissan'wich", "Burrito", "French Toast", "Egg"],
-                "Sides": ["Fries", "Onion Rings", "Hash Browns", "Mozzarella Fries", "Applesauce", "Have-sies\u2122"],
-                "Drinks & Coffee": ["Coffee", "Coke", "Sprite", "Dr Pepper", "Tea", "Juice", "Water", "Milk", "Coca-Cola", "Café"],
-                "Sweets": ["Pie", "Cookie", "Cone", "Shake"],
-                "Condiments": ["Dipping Sauce"],
-                
-                "Misc": []
-            }
-
-            categorized_items = {}
-            for item in items:
-                found = False
-                for category, keywords in categories.items():
-                    if any(keyword.lower() in item.lower() for keyword in keywords):
-                        categorized_items.setdefault(category, []).append(item)
-                        found = True
-                        break
-                if not found:
-                    categorized_items.setdefault("Misc", []).append(item)
-
-            return categorized_items
     
     def plot_states(self):
         conn = sqlite3.connect(self.database_path)
