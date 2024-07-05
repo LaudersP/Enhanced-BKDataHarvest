@@ -57,46 +57,6 @@ class BKDataScraping:
                         f.close()
 
         self.__process_items(states.items(), process_state, "Store Scraping")
-
-    def __process_menu_scrape(self, store_ids, menu):
-        def process_store(store_id):
-            try:
-                scraped_menu = self.client.get_menu(store_id)
-                if scraped_menu:
-                    menu[store_id] = scraped_menu
-            except Exception as e:
-                print(f"ERROR: {e}")
-
-        self.__process_items(store_ids, process_store, "Menu Scraping")
-
-    def __process_menus(self, menus, cursor):
-        insert_query = '''
-            INSERT OR REPLACE INTO menus (store_id, item_id, price_min, price_max, price_default)
-            VALUES (?, ?, ?, ?, ?)
-        '''
-
-        def process_menu(menu):
-            store_id, menu = menu
-            for item in menu:
-                item_id = item.get('id')
-                price = item.get('price')
-
-                if price is None:
-                    continue
-
-                price_min = price.get('min')
-                price_max = price.get('max')
-                price_default = price.get('default')
-
-                if price_min * price_max * price_default == 0:
-                    continue
-
-                try:
-                    cursor.execute(insert_query, (store_id, item_id, price_min, price_max, price_default))
-                except sqlite3.Error as e:
-                    print(f"An error occurred: {e}")
-
-        self.__process_items(menus.items(), process_menu, "Item Scraping")
     
     def __get_item_id(self, item_names, cur):
         select_query = '''
@@ -208,11 +168,34 @@ class BKDataScraping:
         '''
 
         cursor.execute(select_query)
-
-        store_ids = {row[0] for row in cursor.fetchall()}
-        menus = {}
-        self.__process_menu_scrape(store_ids, menus)
-        self.__process_menus(menus, cursor)
+        store_ids = [row[0] for row in cursor.fetchall()]
+        
+        insert_query = '''
+            INSERT OR REPLACE INTO menus (store_id, item_id, price_min, price_max, price_default)
+            VALUES (?, ?, ?, ?, ?)
+        '''
+        
+        for store_id in store_ids:
+            try:
+                scraped_menu = self.client.get_menu(store_id)
+                if scraped_menu:
+                    for item in scraped_menu:
+                        item_id = item.get('id')
+                        price = item.get('price')
+                        
+                        if price is None:
+                            continue
+                        
+                        price_min = price.get('min')
+                        price_max = price.get('max')
+                        price_default = price.get('default')
+                        
+                        if price_min is None or price_max is None or price_default is None:
+                            continue
+                        
+                        cursor.execute(insert_query, (store_id, item_id, price_min, price_max, price_default))
+            except Exception as e:
+                print(f"ERROR: {e}")
 
         conn.commit()
         cursor.close()
