@@ -71,6 +71,27 @@ class BKDataScraping:
             return ids
 
         return [process_item(item) for item in item_names]
+    
+    def __process_item_info(self, cursor, item_ids):
+        def process_item_info(id):
+            insert_query = '''
+                INSERT OR REPLACE INTO items (item_id, item_name)
+                VALUES (?, ?)
+            '''
+            
+            item_info = self.client.get_item_info(id)
+            item_id = item_info[0]
+            
+            if item_id == id:
+                item_name = item_info[1]
+                
+                try:
+                    cursor.execute(insert_query, (item_id, item_name))
+                    
+                except Exception as e:
+                    print(f'ERROR: {e}!')
+            
+        self.__process_items(item_ids, process_item_info, "Processing Item Data")
 
     def store_scraper(self):
         states = {
@@ -170,10 +191,18 @@ class BKDataScraping:
         cursor.execute(select_query)
         store_ids = [row[0] for row in cursor.fetchall()]
         
+        
+        if self.show_progress:
+            store_count = len(store_ids)
+            counter = 0
+        
         insert_query = '''
             INSERT OR REPLACE INTO menus (store_id, item_id, price_min, price_max, price_default)
             VALUES (?, ?, ?, ?, ?)
         '''
+        
+        batch_size = 100
+        batch_counter = 0
         
         for store_id in store_ids:
             try:
@@ -190,14 +219,28 @@ class BKDataScraping:
                         price_max = price.get('max')
                         price_default = price.get('default')
                         
-                        if price_min is None or price_max is None or price_default is None:
+                        if price_min in (None, 0) or price_max in (None, 0) or price_default in (None, 0):
                             continue
                         
-                        cursor.execute(insert_query, (store_id, item_id, price_min, price_max, price_default))
+                        if item_id.startswith("item_"):
+                            cursor.execute(insert_query, (store_id, item_id, price_min, price_max, price_default))
+                            batch_counter += 1
+                            
+                            if batch_counter >= batch_size:
+                                conn.commit()
+                                batch_counter = 0
+                            
+                                
             except Exception as e:
                 print(f"ERROR: {e}")
+                
+            if self.show_progress:
+                counter += 1
+                print(f"Processed {counter}/{store_count}")
 
-        conn.commit()
+        if batch_counter > 0:
+            conn.commit()
+            
         cursor.close()
         conn.close()
         print("Menu scraping completed!")
@@ -214,30 +257,14 @@ class BKDataScraping:
         ''')
 
         select_query = '''
-            SELECT item_id
+            SELECT DISTINCT item_id
             FROM menus
         '''
 
-        insert_query = '''
-            INSERT INTO items (item_id, item_name)
-            VALUES (?, ?)
-        '''
-
         cursor.execute(select_query)
-
-        item_ids_short = {row[0] for row in cursor.fetchall()}
-        for id in tqdm(item_ids_short, total=len(item_ids_short), desc="Inserting Item Data"):
-            itemInfo = self.client.get_item_info(id)
-            item_id = itemInfo[0]
-            if item_id == id:
-                item_name = itemInfo[1]
-                
-                try:
-                    cursor.execute(insert_query, (item_id, item_name))
-                except sqlite3.IntegrityError as e:
-                    print(f"Error: {e}")
-
-        conn.commit()
+        item_ids_short = [row[0] for row in cursor.fetchall()]
+        
+        self.__process_item_info(cursor, item_ids_short)
         cursor.close() 
         conn.close()       
         print("Item info scraping completed!")
