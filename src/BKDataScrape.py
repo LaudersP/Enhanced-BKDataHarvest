@@ -266,6 +266,8 @@ class BKDataScraping:
         item_ids_short = [row[0] for row in cursor.fetchall()]
         
         self.__process_item_info(cursor, item_ids_short)
+        
+        conn.commit()
         cursor.close() 
         conn.close()       
         print("Item info scraping completed!")
