@@ -201,7 +201,7 @@ class BKDataScraping:
             VALUES (?, ?, ?, ?, ?)
         '''
         
-        batch_size = 100
+        batch_size = 25
         batch_counter = 0
         
         for store_id in store_ids:
@@ -224,11 +224,12 @@ class BKDataScraping:
                         
                         if item_id.startswith("item_"):
                             cursor.execute(insert_query, (store_id, item_id, price_min, price_max, price_default))
-                            batch_counter += 1
+                
+                batch_counter += 1
                             
-                            if batch_counter >= batch_size:
-                                conn.commit()
-                                batch_counter = 0
+                if batch_counter >= batch_size:
+                    conn.commit()
+                    batch_counter = 0
                             
                                 
             except Exception as e:
