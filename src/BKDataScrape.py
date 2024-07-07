@@ -277,7 +277,9 @@ class BKDataScraping:
         cursor = conn.cursor()
         
         total_deleted_rows = 0
-        pbar = tqdm(total=4, desc="Validating database")
+        
+        if self.show_progress:
+            pbar = tqdm(total=4, desc="Validating database")
 
         delete_stores_query = '''
             DELETE FROM stores
@@ -289,7 +291,10 @@ class BKDataScraping:
             cursor.execute(delete_stores_query)
             total_deleted_rows += cursor.rowcount
             conn.commit()
-            pbar.update(1)
+            
+            if self.show_progress:
+                pbar.update(1)
+                
         except sqlite3.OperationalError as e:
             print(f"Error: {e}")
 
@@ -306,7 +311,9 @@ class BKDataScraping:
         try:
             cursor.execute(select_consistent_items_query)
             consistent_items = [row[0] for row in cursor.fetchall()]
-            pbar.update(1)
+            
+            if self.show_progress: 
+                pbar.update(1)
 
             if consistent_items:
                 consistent_items_id = self.__get_item_id(consistent_items, cursor)
@@ -323,7 +330,9 @@ class BKDataScraping:
             else:
                 print("\nNo unused items to delete!")
 
-            pbar.update(1)
+            if self.show_progress:
+                pbar.update(1)
+                
         except sqlite3.OperationalError as e:
             print(f"ERROR: {e}")        
 
@@ -348,13 +357,17 @@ class BKDataScraping:
             else:
                 print("No menus to delete.")
                 
-            pbar.update(1)
+            if self.show_progress:
+                pbar.update(1)
+                
         except sqlite3.OperationalError as e:
             print(f"Error: {e}")
 
         cursor.close()
-        conn.close() 
-        pbar.close()
+        conn.close()
+        
+        if self.show_progress: 
+            pbar.close()
 
         print(f"\nTotal database entries removed: {total_deleted_rows}")
         print("Database validation completed!")
