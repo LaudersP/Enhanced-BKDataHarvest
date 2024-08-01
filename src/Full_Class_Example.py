@@ -23,7 +23,3 @@ if __name__ == "__main__":
 
     # Calculate average prices
     bk_data_gathering.generate_json("data.json")
-
-    # Plot the item averages
-    item_names = ["Whopper", "16 Pc. Chicken Nuggets", "Big Fish", "Large Coca-Cola"]
-    bk_data_gathering.plot_average_prices("average_prices.json", item_names)

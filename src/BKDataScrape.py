@@ -80,16 +80,18 @@ class BKDataScraping:
             '''
             
             item_info = self.client.get_item_info(id)
-            item_id = item_info[0]
-            
-            if item_id == id:
-                item_name = item_info[1]
                 
-                try:
-                    cursor.execute(insert_query, (item_id, item_name))
+            if(item_info != None):
+                item_id = item_info[0]
+                
+                if item_id == id:
+                    item_name = item_info[1]
                     
-                except Exception as e:
-                    print(f'ERROR: {e}!')
+                    try:
+                        cursor.execute(insert_query, (item_id, item_name))
+                        
+                    except Exception as e:
+                        print(f'ERROR: {e}!')
             
         self.__process_items(item_ids, process_item_info, "Processing Item Data")
 
