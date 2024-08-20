@@ -33,28 +33,21 @@ class BKDataScraping:
             '''
 
             for store_id, store_info in stores.items():
-                    _id = store_info['_id']
-                    city = store_info['physicalAddress']['city'].title().replace(',', '')
-                    state_name = store_info['physicalAddress']['stateProvince']
-                    postal_code = store_info['physicalAddress']['postalCode'].split('-')[0]
-                    latitude = store_info['latitude']
-                    longitude = store_info['longitude']
+                _id = store_info['_id']
+                city = store_info['city']  # Accessing the city directly from the filtered data
+                state_name = store_info['stateProvince']  # Accessing the stateProvince directly
+                postal_code = store_info['postalCode']  # Accessing the postalCode directly
+                latitude = store_info['latitude']
+                longitude = store_info['longitude']
 
-                    if state_name in states:
-                        try:
-                            cursor.execute(insert_query, (_id, store_id, city, state_name, postal_code, latitude, longitude))
-                        except sqlite3.IntegrityError:
+                if state_name in states:
+                    try:
+                        cursor.execute(insert_query, (_id, store_id, city, state_name, postal_code, latitude, longitude))
+                    except sqlite3.IntegrityError:
+                        if(self.show_progress):
                             print(f"Duplicate entry for {_id}, skipping...")
-                    else:   
-                        f = open('manual_review_required.txt', 'a')
-                        f.write(f"ID: {_id}\n")
-                        f.write(f"Store: {store_id}\n")
-                        f.write(f"State: {state_name}\n")
-                        f.write(f"Postal Code: {postal_code}\n")
-                        f.write(f"Lat: {latitude}\n")
-                        f.write(f"Long: {longitude}\n")
-                        f.write("------------------------------\n")
-                        f.close()
+                        else:
+                            pass
 
         self.__process_items(states.items(), process_state, "Store Scraping")
     
@@ -420,8 +413,8 @@ class BKDataScraping:
                 "Chicken & Fish": ["Chicken", "Nuggets", "Crispy", "Fish"],
                 "Breakfast": ["Biscuit", "Croissan'wich", "Burrito", "French Toast", "Egg"],
                 "Sides": ["Fries", "Onion Rings", "Hash Browns", "Mozzarella Fries", "Applesauce", "Have-sies\u2122"],
-                "Drinks & Coffee": ["Coffee", "Coke", "Sprite", "Dr Pepper", "Tea", "Juice", "Water", "Milk", "Coca-Cola", "Café"],
-                "Sweets": ["Pie", "Cookie", "Cone", "Shake"],
+                "Drinks & Coffee": ["Coffee", "Coke", "Sprite", "Dr Pepper", "Tea", "Juice", "Water", "Milk", "Coca-Cola", "Café", "Dr. Pepper", "Frozen"],
+                "Sweets": ["Pie", "Cookie", "Cone", "Shake", "Soft Serve"],
                 "Condiments": ["Dipping Sauce"],
                 
                 "Misc": []

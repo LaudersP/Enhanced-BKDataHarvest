@@ -126,6 +126,7 @@ class BKClient:
 
         return results
     
+    
 
     def get_nearby_stores(self, lat, lon, session=None, ids_only=False):
         """
@@ -159,31 +160,72 @@ class BKClient:
         else:
             return j['data']['restaurantsV2']['nearby']['nodes']
         
-
-    def get_many_nearby_stores(self, locations, threads=1):
+    def get_filtered_store_data(self, lat, lon, session=None):
         """
-        Fetches nearby Burger King stores for multiple locations concurrently.
+        Fetches and filters nearby Burger King stores based on latitude and longitude, retaining only necessary fields.
 
         Args:
-            locations (list): A list of (latitude, longitude) tuples for which nearby stores need to be fetched.
-            threads (int, optional): The number of threads to use for concurrent requests. Defaults to 1.
+            lat (float): The latitude of the location.
+            lon (float): The longitude of the location.
+            session (requests.Session, optional): A requests session object to use for the request. Defaults to None.
 
         Returns:
-            dict: A dictionary mapping store IDs to their corresponding store information. If information cannot be fetched for a store (due to an invalid store ID or a failed request), the store ID will not be included in the returned dictionary.
+            list: A list of filtered store information dictionaries.
         """
 
+        url = self.nearby_store_template % (lat, lon)
+
+        try:
+            if session:
+                resp = session.get(url, timeout=10)
+            else:
+                resp = requests.get(url, timeout=10)
+
+            if resp.status_code == 200:
+                j = resp.json()
+
+                if self.any_not_in(j, ['data', 'restaurantsV2', 'nearby', 'nodes']):
+                    return []
+
+                filtered_stores = []
+                for store in j['data']['restaurantsV2']['nearby']['nodes']:
+                    filtered_store = {
+                        '_id': store['_id'],
+                        'storeId': store['storeId'],
+                        'isAvailable': store['isAvailable'],
+                        'city': store['physicalAddress']['city'].title().replace(',', ''),
+                        'stateProvince': store['physicalAddress']['stateProvince'],
+                        'postalCode': store['physicalAddress']['postalCode'].split('-')[0],
+                        'latitude': store['latitude'],
+                        'longitude': store['longitude']
+                    }
+                    filtered_stores.append(filtered_store)
+
+                return filtered_stores
+
+        except requests.RequestException as e:
+            print(f"Request failed: {e}")
+            return []
+
+    def get_many_nearby_stores(self, locations, threads=10):
         results = {}
         
         with ThreadPoolExecutor(max_workers=threads) as executor:
             session = requests.Session()
-            futures = [executor.submit(self.get_nearby_stores, lat, lon, session) for lat, lon in locations]
+            futures = [executor.submit(self.get_filtered_store_data, lat, lon, session) for lat, lon in locations]
 
             for future in futures:
-                result = future.result()
-                if result:
-                    results.update({store['storeId']: store for store in result})
+                try:
+                    filtered_result = future.result()
+                    if filtered_result:
+                        for store in filtered_result:
+                            if store['isAvailable']:
+                                results[store['storeId']] = store
+                except Exception as e:
+                    print(f"Error fetching stores: {e}")
 
         return results
+
     
     
     def get_store_info(self, restaurant_id, session=None):
@@ -293,10 +335,6 @@ class BKClient:
 
         return ItemInfo(item_id, name, image_url, nutrition, is_dummy, hierarchy)
 
-            
-            
-    
-
     def get_many_item_info(self, item_ids, threads=1):
         """
         Fetches information about multiple Burger King menu items concurrently.
@@ -348,7 +386,7 @@ class BKClient:
                 cur_lon += increment
             cur_lat += increment
             cur_lon = lon_start
-
+            
         bks = self.get_many_nearby_stores(intersections, threads=10)
 
         return bks
